@@ -3,6 +3,7 @@
 name: "tokens"
 version: "1.0.0"
 config-version: 2
+require-dbt-version: ">=1.8.0"
 
 quoting:
   database: false
@@ -24,7 +25,7 @@ vars:
 model-paths: ["models", "../../sources"]
 # test-paths: ["tests"]
 # seed-paths: ["seeds"]
-macro-paths: ["../../macros"]
+macro-paths: ["macros", "../../dbt_macros"]
 
 target-path: "target" # directory which will store compiled SQL files
 clean-targets: # directories to be removed by `dbt clean`
