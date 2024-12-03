@@ -74,7 +74,7 @@ Adoption of `arrakis_` for macro names.
 
 ### Macro Usage Example
 
-Below is an example of how to use the [`arrakis_compatible_v2_trades` macro](/macros/models/_sector/alm/arrakis_compatible_trades.sql) macro within our project. This macro is designed to standardize the trades data for projects compatible with Arrakis V2 on various blockchains.
+Below is an example of how to use the [`arrakis_compatible_v2_trades` macro](/dbt_macros/models/_sector/alm/arrakis_compatible_trades.sql) macro within our project. This macro is designed to standardize the trades data for projects compatible with Arrakis V2 on various blockchains.
 
 ```sql
 {{
@@ -138,7 +138,7 @@ models:
     config:
       tags: [ 'ethereum', 'alm', 'arrakis', 'arrakis_finance', 'trades' ]
     description: "arrakis finance ethereum base trades"
-    tests:
+    data_tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns:
             - tx_hash

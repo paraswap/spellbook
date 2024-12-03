@@ -18,6 +18,10 @@ sources:
     tables:
       - name: FraxswapPair_evt_Swap
       - name: FraxswapFactory_evt_PairCreated
+  - name: trader_joe_v2_2_avalanche_c
+    tables:
+      - name: LBPair_evt_Swap
+      - name: LBFactory_evt_LBPairCreated
   - name: trader_joe_v2_1_avalanche_c
   - name: trader_joe_avalanche_c
   - name: balancer_v2_avalanche_c
@@ -57,7 +61,11 @@ sources:
   - name: curvefi_avalanche_c
     tables:
       - name: 3pool_evt_TokenExchange
+        quoting:
+          identifier: true # override source defaults
       - name: 3poolV2_evt_TokenExchange
+        quoting:
+          identifier: true # override source defaults
       - name: AavePool_evt_TokenExchange
       - name: AavePool_evt_TokenExchangeUnderlying
       - name: aave_v3_evt_TokenExchangeUnderlying
