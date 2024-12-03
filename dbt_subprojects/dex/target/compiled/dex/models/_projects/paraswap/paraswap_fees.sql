@@ -1,6 +1,145 @@
 --para-fee-details-with-epoch-v3  https://dune.com/queries/4257927
 with fee_claim_detail as (
+    -- <arbitrum>
+    -- <v6>
+    -- all registerFee calls on v6 Fee Claimer    
+    WITH parsed_fee_data AS (
+        SELECT
+            contract_address,
+            call_success,
+            call_tx_hash,
+            call_trace_address,
+            call_block_time,
+            call_block_number,
+            CAST(json_parse(feeData) AS MAP<VARCHAR, JSON>) AS fee_json
+        FROM
+            paraswap_v6_arbitrum.AugustusFeeVault_call_registerFees
+        WHERE
+            call_success = true
+    ),
+    unpacked_fee_data as (
+    SELECT
+        contract_address,
+        call_success,
+        call_tx_hash,
+        call_trace_address,
+        call_block_time,
+        call_block_number,
+        CAST(fee_json['addresses'] AS ARRAY<VARCHAR>) AS addresses,
+        from_hex(CAST(fee_json['token'] AS VARCHAR)) AS _token,
+        CAST(fee_json['fees'] AS ARRAY<DOUBLE>) AS fees
+    FROM
+        parsed_fee_data
+    ),
+    exploded_data AS (
+        SELECT 
+            call_block_time,
+            call_block_number,
+            call_tx_hash, 
+            address, 
+            _token, 
+            fee
+        FROM 
+            unpacked_fee_data
+        CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
+    )
+    SELECT 
+        'registerFee-v6' as source, 
+        date_trunc('day', call_block_time) as block_date,
+        call_block_time,
+        call_block_number,
+        call_tx_hash, 
+        address as user_address, 
+        (case when _token = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee then 0x82af49447d8a07e3bd95bd0d56f35241523fbab1 else _token end) as token_address,
+        fee as fee_raw
+    FROM 
+        exploded_data
+    
+    union all
+    -- ERC20 transfer to v6 Depositor
     select 'arbitrum' as blockchain,
+        'erc20-v6' as source,
+        date_trunc('day', erc.evt_block_time) as block_date,
+        erc.evt_block_time as block_time,
+        erc.evt_block_number as call_block_number,
+        erc.evt_tx_hash as call_tx_hash,
+        erc.to as user_address,
+        (case when erc.contract_address = 0xe50fa9b3c56ffb159cb0fca61f5c9d750e8128c8 then 0x82af49447d8a07e3bd95bd0d56f35241523fbab1 -- aArbWETH
+            else erc.contract_address end) as token_address,
+        erc.value as fee_raw
+    from arbitrum.transactions t
+    join erc20_arbitrum.evt_Transfer erc on t.hash = erc.evt_tx_hash
+        and t.block_number = erc.evt_block_number
+        -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
+        -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
+        and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+    -- If following transfers have outgoing only, exclude this revenue.
+    left join erc20_arbitrum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
+        and t.block_number = erc2.evt_block_number
+        -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3 -- no need to restrict then
+        -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
+        and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and erc2.evt_index > erc.evt_index
+        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+    left join erc20_arbitrum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
+        and t.block_number = erc3.evt_block_number
+        and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and erc3.evt_index > erc.evt_index
+        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+    -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
+    where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
+    and t.success
+    and block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20    
+
+    union all
+    -- v6: ETH Transfer to SmartVault directly
+    select 'arbitrum' as blockchain,
+        'eth-v6' as source,
+        date_trunc('day', t.block_time) as block_date,
+        t.block_time as block_time,
+        t.block_number as call_block_number,
+        t.tx_hash as call_tx_hash,
+        t.to as user_address,
+        0x82af49447d8a07e3bd95bd0d56f35241523fbab1 as token_address,
+        t.value as fee_raw
+    from arbitrum.transactions tr
+    join arbitrum.traces t on 
+        t.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        and tr.hash = t.tx_hash
+        and tr.block_number = t.block_number        
+        -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
+    -- If following transfers have outgoing only, exclude this revenue.
+    left join arbitrum.traces t2 on
+        t2.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        and tr.hash = t2.tx_hash -- Other income for Depositor v6
+        and tr.block_number = t2.block_number    
+        -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and t2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and t2.trace_address > t.trace_address
+        and t2.type = 'call'
+        and t2.call_type = 'call'
+        and t2.value > cast(0 as uint256)
+    left join arbitrum.traces t3 on 
+        t3.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        and tr.hash = t3.tx_hash -- Outgoing
+        and tr.block_number = t3.block_number        
+        and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and t3.trace_address > t.trace_address
+        and t3.type = 'call'
+        and t3.call_type = 'call'
+        and t3.value > cast(0 as uint256)        
+    where (t2.tx_hash is not null or t3.tx_hash is null)
+    and tr.success
+    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+
+    -- </v6>
+    union all
+    
+    -- v5 fee claimer.registerFee
+    select 'arbitrum' as blockchain,
+        'registerFee-v5' as source,
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
@@ -16,8 +155,9 @@ with fee_claim_detail as (
     
     union all
     
-    -- Transfer to SmartVault directly
+    -- v5: ERC20 Transfer to SmartVault directly
     select 'arbitrum' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -31,28 +171,34 @@ with fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_arbitrum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
+        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     left join erc20_arbitrum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
+        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
     and block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
-    and not exists (
-        select 1 from paraswap_arbitrum.FeeClaimer_call_registerFee
-        where call_tx_hash = erc.evt_tx_hash
-        and call_block_number = erc.evt_block_number
-    )
+    -- I think the below conditional was pointless
+    -- and not exists (
+    --     select 1 from paraswap_arbitrum.FeeClaimer_call_registerFee
+    --     where call_tx_hash = erc.evt_tx_hash
+    --     and call_block_number = erc.evt_block_number
+    -- )
 
     union all
 
+    -- v5: ETH Transfer to SmartVault directly
     select 'arbitrum' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
@@ -61,38 +207,40 @@ with fee_claim_detail as (
         0x82af49447d8a07e3bd95bd0d56f35241523fbab1 as token_address,
         t.value as fee_raw
     from arbitrum.transactions tr
-    join arbitrum.traces t on tr.hash = t.tx_hash
-        and tr.block_number = t.block_number
+    join arbitrum.traces t on 
+        t.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        and tr.hash = t.tx_hash
+        and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-        and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
-    left join arbitrum.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-        and tr.block_number = t2.block_number
+    left join arbitrum.traces t2 on
+        t2.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        and tr.hash = t2.tx_hash -- Other income for SmartVault
+        and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t2.trace_address > t.trace_address
         and t2.type = 'call'
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
-    left join arbitrum.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and tr.block_number = t3.block_number
+    left join arbitrum.traces t3 on 
+        t3.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        and tr.hash = t3.tx_hash -- Outgoing
+        and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
         and t3.type = 'call'
         and t3.call_type = 'call'
-        and t3.value > cast(0 as uint256)
+        and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
     and tr.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
-    and not exists (
-        select 1 from paraswap_arbitrum.FeeClaimer_call_registerFee
-        where call_tx_hash = t.tx_hash
-        and call_block_number = t.block_number
-    )
-    
+    -- </arbitrum>
     union all
     
     select 'avalanche_c' as blockchain,
+        'registerFee-v5' as source, 
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
@@ -108,6 +256,7 @@ with fee_claim_detail as (
     
     -- Transfer to SmartVault directly
     select 'avalanche_c' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -142,6 +291,7 @@ with fee_claim_detail as (
     union all
 
     select 'avalanche_c' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
@@ -182,6 +332,7 @@ with fee_claim_detail as (
     union all
     
     select 'bnb' as blockchain,
+        'registerFee-v5' as source,
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
@@ -197,6 +348,7 @@ with fee_claim_detail as (
     
     -- Transfer to SmartVault directly
     select 'bnb' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -231,6 +383,7 @@ with fee_claim_detail as (
     union all
 
     select 'bnb' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
@@ -267,25 +420,33 @@ with fee_claim_detail as (
         where call_tx_hash = t.tx_hash
         and call_block_number = t.block_number
     )
-    
+
     union all
-    
+
+    -- <network: ethereum>    
+    -- all registerFee calls on v5 Fee Claimer
     select 'ethereum' as blockchain,
+        'registerFee-v5' as source,
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
         call_tx_hash,
         _account as user_address,
+        -- FeeClaimer_call_registerFee -> normalize native token to wrapped token
         (case when _token = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee then 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2 else _token end) as token_address,
         _fee as fee_raw
+
+        -- Paraswap v5 Fee Claimer: https://etherscan.io/address/0xef13101c5bbd737cfb2bf00bbd38c626ad6952f7#code
     from paraswap_ethereum.FeeClaimer_call_registerFee
     where call_success = true
     and call_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     
     union all
     
-    -- Transfer to SmartVault directly
+    -- Transfer to SmartVault directly, (because some v5 methods don't call registerFee, and the fee is sent from within Augustus? TODO: confirm it)
+    -- sample txs: 0x3a9a1a32cfa1e703d2a8e1b965ee9c23c399ba26ced608a03a5dbf4193a4af18, 0xa70e19c1756634556f3ff5bae570b695aac85dff7d5de86faec9ddef2c0ea6de, 0x956f1de15ce6eb7e1dfee9e46be6d4d4a9d7c5903c45b4b3228881ac8108be39
     select 'ethereum' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -296,18 +457,22 @@ with fee_claim_detail as (
     from ethereum.transactions t
     join erc20_ethereum.evt_Transfer erc on t.hash = erc.evt_tx_hash
         and t.block_number = erc.evt_block_number
-        and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-        and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- v5 Router
+        and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- v5 SmartVault
+        and erc.evt_block_time  >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_ethereum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
-        and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-        and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- v5 Router
+        and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- v5 SmartVault
         and erc2.evt_index > erc.evt_index
+        and erc2.evt_block_time  >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     left join erc20_ethereum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
-        and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- v5 SmartVault
         and erc3.evt_index > erc.evt_index
+        and erc3.evt_block_time  >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+        -- not sure about the conditional below. Shouldn't be (erc2.evt_tx_hash is not null AND erc3.evt_tx_hash is null) ?
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
     and block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
@@ -319,28 +484,35 @@ with fee_claim_detail as (
 
     union all
 
+    -- ETH transfers / from augustus v5 to SmartVault v5  (i.e. direct calls to v5 SmartVault)
+    -- sample 0x63e9dc15061218a7f80eec244807151ab727cd3d79247d55698194043da8da40 (seen amongst internal txs on the explorer)
     select 'ethereum' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
         t.tx_hash as call_tx_hash,
         t.to as user_address,
+        -- normalize to WETH
         0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2 as token_address,
         t.value as fee_raw
     from ethereum.transactions tr
     join ethereum.traces t on tr.hash = t.tx_hash
         and tr.block_number = t.block_number
-        and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-        and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- v5 Router
+        and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- v5 SmartVault
+        and t.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
     -- If following transfers have outgoing only, exclude this revenue.
     left join ethereum.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
         and tr.block_number = t2.block_number
-        and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-        and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- v5 Router
+        and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- v5 SmartVault
         and t2.trace_address > t.trace_address
         and t2.type = 'call'
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
+        and t2.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+
     left join ethereum.traces t3 on tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -348,6 +520,8 @@ with fee_claim_detail as (
         and t3.type = 'call'
         and t3.call_type = 'call'
         and t3.value > cast(0 as uint256)
+        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
+    -- not sure about the conditional below. Shouldn't be (erc2.evt_tx_hash is not null AND erc3.evt_tx_hash is null) ?
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
     and tr.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
@@ -356,10 +530,11 @@ with fee_claim_detail as (
         where call_tx_hash = t.tx_hash
         and call_block_number = t.block_number
     )
-    
+    -- </network: ethereum>
     union all
     
     select 'fantom' as blockchain,
+        'registerFee-v5' as source,
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
@@ -375,6 +550,7 @@ with fee_claim_detail as (
     
     -- Transfer to SmartVault directly
     select 'fantom' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -409,6 +585,7 @@ with fee_claim_detail as (
     union all
 
     select 'fantom' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
@@ -449,6 +626,7 @@ with fee_claim_detail as (
     union all
     
     select 'optimism' as blockchain,
+        'registerFee-v5' as source,
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
@@ -464,6 +642,7 @@ with fee_claim_detail as (
     
     -- Transfer to SmartVault directly
     select 'optimism' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -498,6 +677,7 @@ with fee_claim_detail as (
     union all
 
     select 'optimism' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
@@ -538,6 +718,7 @@ with fee_claim_detail as (
     union all
     
     select 'polygon' as blockchain,
+        'registerFee-v5' as source,
         date_trunc('day', call_block_time) as block_date,
         call_block_time as block_time,
         call_block_number,
@@ -553,6 +734,7 @@ with fee_claim_detail as (
     
     -- Transfer to SmartVault directly
     select 'polygon' as blockchain,
+        'erc20-v5' as source,
         date_trunc('day', erc.evt_block_time) as block_date,
         erc.evt_block_time as block_time,
         erc.evt_block_number as call_block_number,
@@ -587,6 +769,7 @@ with fee_claim_detail as (
     union all
 
     select 'polygon' as blockchain,
+        'eth-v5' as source,
         date_trunc('day', t.block_time) as block_date,
         t.block_time as block_time,
         t.block_number as call_block_number,
