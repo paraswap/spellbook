@@ -7,7 +7,14 @@
                                 "paraswap",
                                 \'["eptighte"]\') }}'
         )
-}}{% 
+}}
+-- old date: '2024-07-08 12:00' 
+{% 
+
+
+set cutoff_date = '2024-11-30 00:00'  
+
+%}{% 
 
 set blockchains = [
     'arbitrum',
@@ -104,12 +111,155 @@ set blockchain_dependencies = {
     },
 } 
 %}
-with fee_claim_detail as (
-    {% for blockchain in blockchains %}
-    select '{{ blockchain }}' as blockchain,            
-            date_trunc('day', call_block_time) as block_date,
-            call_block_time as block_time,
+with
+{% for blockchain in blockchains %}
+    -- all registerFee calls on v6 Fee Claimer        
+    parsed_fee_data_{{ blockchain }} AS (
+        SELECT
+            contract_address,
+            call_success,
+            call_tx_hash,
+            call_trace_address,
+            call_block_time,
             call_block_number,
+            CAST(json_parse(feeData) AS MAP<VARCHAR, JSON>) AS fee_json
+        FROM
+            paraswap_v6_{{ blockchain }}.AugustusFeeVault_call_registerFees
+        WHERE
+            call_success = true
+    ),
+    unpacked_fee_data_{{ blockchain }} as (
+    SELECT
+        contract_address,
+        call_success,
+        call_tx_hash,
+        call_trace_address,
+        call_block_time,
+        call_block_number,
+        CAST(fee_json['addresses'] AS ARRAY<VARCHAR>) AS addresses,
+        from_hex(CAST(fee_json['token'] AS VARCHAR)) AS _token,
+        CAST(fee_json['fees'] AS ARRAY<DOUBLE>) AS fees
+    FROM
+        parsed_fee_data_{{ blockchain }}
+    ),
+    exploded_data_{{ blockchain }} AS (
+        SELECT 
+            call_block_time,
+            call_block_number,
+            call_tx_hash, 
+            from_hex(address) as "address",
+            _token, 
+            fee
+        FROM 
+            unpacked_fee_data_{{ blockchain }}
+        CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
+    ),
+{% endfor %}
+fee_claim_detail as (
+    {% for blockchain in blockchains %}
+    -- <v6>
+    -- all registerFee calls on v6 Fee Claimer        
+    select '{{ blockchain }}' as blockchain,
+        'registerFee-v6' as source, 
+        date_trunc('day', call_block_time) as block_date,
+        call_block_time as block_time,
+        call_block_number,
+        call_tx_hash, 
+        address as user_address, 
+        (case when _token = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee then 0x82af49447d8a07e3bd95bd0d56f35241523fbab1 else _token end) as token_address,
+        fee as fee_raw
+    FROM 
+        exploded_data_{{ blockchain }}
+        where call_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+
+    union all
+    -- ERC20 transfer to v6 Depositor
+    select '{{ blockchain }}' as blockchain,
+        'erc20-v6' as source,
+        date_trunc('day', erc.evt_block_time) as block_date,
+        erc.evt_block_time as block_time,
+        erc.evt_block_number as call_block_number,
+        erc.evt_tx_hash as call_tx_hash,
+        erc.to as user_address,
+        (case when erc.contract_address = 0xe50fa9b3c56ffb159cb0fca61f5c9d750e8128c8 then 0x82af49447d8a07e3bd95bd0d56f35241523fbab1 -- aArbWETH
+            else erc.contract_address end) as token_address,
+        erc.value as fee_raw
+    from {{ blockchain }}.transactions t
+    join erc20_{{ blockchain }}.evt_Transfer erc on t.hash = erc.evt_tx_hash
+        and t.block_number = erc.evt_block_number
+        -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
+        -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
+        and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and erc.evt_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    -- If following transfers have outgoing only, exclude this revenue.
+    left join erc20_{{ blockchain }}.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
+        and t.block_number = erc2.evt_block_number
+        -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3 -- no need to restrict then
+        -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
+        and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and erc2.evt_index > erc.evt_index
+        and erc2.evt_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    left join erc20_{{ blockchain }}.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
+        and t.block_number = erc3.evt_block_number
+        and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and erc3.evt_index > erc.evt_index
+        and erc3.evt_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
+    where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
+    and t.success
+    and block_time >= TIMESTAMP '{{ cutoff_date }}'     
+
+    union all
+    -- v6: ETH Transfer to SmartVault directly
+    select '{{ blockchain }}' as blockchain,
+        'eth-v6' as source,
+        date_trunc('day', t.block_time) as block_date,
+        t.block_time as block_time,
+        t.block_number as call_block_number,
+        t.tx_hash as call_tx_hash,
+        t.to as user_address,
+        0x82af49447d8a07e3bd95bd0d56f35241523fbab1 as token_address,
+        t.value as fee_raw
+    from {{ blockchain }}.transactions tr
+    join {{ blockchain }}.traces t on 
+        t.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+        and tr.hash = t.tx_hash
+        and tr.block_number = t.block_number        
+        -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
+    -- If following transfers have outgoing only, exclude this revenue.
+    left join {{ blockchain }}.traces t2 on
+        t2.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+        and tr.hash = t2.tx_hash -- Other income for Depositor v6
+        and tr.block_number = t2.block_number    
+        -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and t2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and t2.trace_address > t.trace_address
+        and t2.type = 'call'
+        and t2.call_type = 'call'
+        and t2.value > cast(0 as uint256)
+    left join {{ blockchain }}.traces t3 on 
+        t3.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+        and tr.hash = t3.tx_hash -- Outgoing
+        and tr.block_number = t3.block_number        
+        and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
+        and t3.trace_address > t.trace_address
+        and t3.type = 'call'
+        and t3.call_type = 'call'
+        and t3.value > cast(0 as uint256)        
+    where (t2.tx_hash is not null or t3.tx_hash is null)
+    and tr.success
+    and tr.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+
+    -- </v6>
+    union all
+
+    -- v5 fee claimer.registerFee
+    select '{{ blockchain }}' as blockchain,
+        'registerFee-v5' as source,
+        date_trunc('day', call_block_time) as block_date,
+        call_block_time as block_time,
+        call_block_number,
             call_tx_hash,
             _account as user_address,
             (case when _token = {{ blockchain_dependencies.get('nativeToken') }} then {{ blockchain_dependencies[blockchain].get('wrappedNative') }}{% 
@@ -122,15 +272,17 @@ with fee_claim_detail as (
             _fee as fee_raw
         from {{ blockchain_dependencies[blockchain].get('registerFeesV5') }}
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
-        
-        union all
-        
-        -- Transfer to SmartVault directly
-        select '{{ blockchain }}' as blockchain,            
-            date_trunc('day', erc.evt_block_time) as block_date,
-            erc.evt_block_time as block_time,
-            erc.evt_block_number as call_block_number,
+            and call_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+
+    union all
+
+    -- Transfer to SmartVault directly
+    -- v5: ERC20 Transfer to SmartVault directly
+    select '{{ blockchain }}' as blockchain,
+        'erc20-v5' as source,
+        date_trunc('day', erc.evt_block_time) as block_date,
+        erc.evt_block_time as block_time,
+        erc.evt_block_number as call_block_number,
             erc.evt_tx_hash as call_tx_hash,
             erc.to as user_address,{% 
             if blockchain_dependencies[blockchain].get('tokensToReplace')|length == 0 %}
@@ -147,67 +299,74 @@ with fee_claim_detail as (
             erc.value as fee_raw
         from {{ blockchain_dependencies[blockchain].get('transactions') }} t
         join {{ blockchain_dependencies[blockchain].get('erc20EvtTransfer') }} erc on t.hash = erc.evt_tx_hash
-            and t.block_number = erc.evt_block_number
-            and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-            and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault            
-        -- If following transfers have outgoing only, exclude this revenue.
+        and t.block_number = erc.evt_block_number
+        and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc.evt_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    -- If following transfers have outgoing only, exclude this revenue.
         left join {{ blockchain_dependencies[blockchain].get('erc20EvtTransfer') }} erc2 on t.hash = erc2.evt_tx_hash
-            and t.block_number = erc2.evt_block_number
-            and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-            and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-            and erc2.evt_index > erc.evt_index            
+        and t.block_number = erc2.evt_block_number
+        and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc2.evt_index > erc.evt_index
+        and erc2.evt_block_time >= TIMESTAMP '{{ cutoff_date }}' 
         left join {{ blockchain_dependencies[blockchain].get('erc20EvtTransfer') }} erc3 on t.hash = erc3.evt_tx_hash
-            and t.block_number = erc3.evt_block_number
-            and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-            and erc3.evt_index > erc.evt_index            
-        where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
-            and t.success
-            and block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20        
-        and not exists (
+        and t.block_number = erc3.evt_block_number
+        and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and erc3.evt_index > erc.evt_index
+        and erc3.evt_block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
+    and t.success
+    and block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    and not exists (
             select 1 from paraswap_{{blockchain}}.FeeClaimer_call_registerFee
-            where call_tx_hash = erc.evt_tx_hash
-            and call_block_number = erc.evt_block_number
-        )
+        where call_tx_hash = erc.evt_tx_hash
+        and call_block_number = erc.evt_block_number
+    )    
 
-        union all
-        
-        select '{{ blockchain }}' as blockchain,            
-            date_trunc('day', t.block_time) as block_date,
-            t.block_time as block_time,
-            t.block_number as call_block_number,
+    union all
+        -- v5: ETH Transfer to SmartVault directly
+        select '{{ blockchain }}' as blockchain,
+        'eth-v5' AS source,
+        date_trunc('day', t.block_time) as block_date,
+        t.block_time as block_time,
+        t.block_number as call_block_number,
             t.tx_hash as call_tx_hash,
             t.to as user_address,
             {{ blockchain_dependencies[blockchain].get('wrappedNative')}} as token_address,
-            t.value as fee_raw
+        t.value as fee_raw
         from {{ blockchain_dependencies[blockchain].get('transactions') }} tr
         join {{ blockchain_dependencies[blockchain].get('traces') }} t on tr.hash = t.tx_hash
-            and tr.block_number = t.block_number        
-            and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-            and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
-        -- If following transfers have outgoing only, exclude this revenue.
-        left join {{ blockchain_dependencies[blockchain].get('traces') }} t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-            and tr.block_number = t2.block_number    
-            and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
-            and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-            and t2.trace_address > t.trace_address
-            and t2.type = 'call'
-            and t2.call_type = 'call'
-            and t2.value > cast(0 as uint256)
+            and t.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+        and tr.block_number = t.block_number        
+        and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
+        and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
+    -- If following transfers have outgoing only, exclude this revenue.
+    left join {{ blockchain_dependencies[blockchain].get('traces') }} t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
+                and t2.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+                and tr.block_number = t2.block_number    
+        and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
+        and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and t2.trace_address > t.trace_address
+        and t2.type = 'call'
+        and t2.call_type = 'call'
+        and t2.value > cast(0 as uint256)
         left join {{ blockchain_dependencies[blockchain].get('traces') }} t3 on tr.hash = t3.tx_hash -- Outgoing
-            and tr.block_number = t3.block_number        
-            and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-            and t3.trace_address > t.trace_address
-            and t3.type = 'call'
-            and t3.call_type = 'call'
-            and t3.value > cast(0 as uint256)        
-        where (t2.tx_hash is not null or t3.tx_hash is null)
-            and tr.success
-            and tr.block_time >= TIMESTAMP '2024-07-08 12:00' -- Start from Epoch 20
-                and not exists (
+        and t3.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+        and tr.block_number = t3.block_number        
+        and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
+        and t3.trace_address > t.trace_address
+        and t3.type = 'call'
+        and t3.call_type = 'call'
+        and t3.value > cast(0 as uint256)        
+    where (t2.tx_hash is not null or t3.tx_hash is null)
+    and tr.success
+    and tr.block_time >= TIMESTAMP '{{ cutoff_date }}' 
+    and not exists (
                 select 1 from paraswap_{{blockchain}}.FeeClaimer_call_registerFee
-                where call_tx_hash = t.tx_hash
-                and call_block_number = t.block_number
-            )
+        where call_tx_hash = t.tx_hash
+        and call_block_number = t.block_number
+    )
         {% 
         if not loop.last %}
         union all{% 
@@ -221,11 +380,13 @@ price_list as (
         contract_address,
         avg(price) as price
     from prices.usd
-    where minute >= date('2021-04-01')
+    where minute >= TIMESTAMP '{{ cutoff_date }}' 
     group by 1, 2, 3
 )
 
-select e.epoch_num as en,
+select 
+    f.source as source,
+    e.epoch_num as en,
     f.blockchain as bc,
     f.block_date as bd,
     f.block_time as bt,
