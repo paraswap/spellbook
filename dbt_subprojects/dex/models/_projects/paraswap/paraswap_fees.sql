@@ -8,11 +8,11 @@
                                 \'["eptighte"]\') }}'
         )
 }}
--- old date: '2024-07-08 12:00' 
+-- old date: '2024-07-08 12:00'  -- start of epoch 20
 {% 
 
 
-set cutoff_date = '2024-11-30 00:00'  
+set cutoff_date = '2024-07-08 12:00'  
 
 %}{% 
 
