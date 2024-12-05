@@ -114,8 +114,9 @@ set blockchain_dependencies = {
 } 
 %}
 with
-{% for blockchain in blockchains %}{% 
+{% for blockchain in blockchains %}{%     
     if blockchain_dependencies[blockchain].get('delta_v2') %}
+    -- delta v2 protocol's and partners revenue src data 
     deltav2_fees_balances_raw_{{ blockchain }} as (
             select            
                 evt_block_time,
@@ -125,13 +126,14 @@ with
                 protocolFee,
                 partnerFee            
             from
-                paraswapdelta_{{ blockchain }}.ParaswapDeltav2_evt_OrderSettled as evt
-            {% if is_incremental() %}
-                WHERE 
-                {{ incremental_predicate('evt_block_time') }}
-            {% endif %}   
+                paraswapdelta_{{ blockchain }}.ParaswapDeltav2_evt_OrderSettled as evt            
+                where 
+                {% if is_incremental() %}                    
+                    {{ incremental_predicate('evt_block_time') }} AND
+                {% endif %}   
+                evt_block_time >= TIMESTAMP '{{ cutoff_date }}'     
     ),{% 
-    endif %}
+    endif %}    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_{{ blockchain }} AS (
         SELECT
@@ -146,6 +148,7 @@ with
             paraswap_v6_{{ blockchain }}.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '{{ cutoff_date }}'     
     ),
     unpacked_fee_data_{{ blockchain }} as (
     SELECT
@@ -177,6 +180,7 @@ with
 fee_claim_detail as (
     {% for blockchain in blockchains %}{% 
     if blockchain_dependencies[blockchain].get('delta_v2') %}
+    -- delta v2 protocol's revenue
     select '{{ blockchain }}' as blockchain,
         'delta-v2' as source, 
         date_trunc('day', evt_block_time) as block_date,
@@ -186,6 +190,20 @@ fee_claim_detail as (
         {{ blockchain_dependencies[blockchain].get('delta_v2') }} as user_address, 
         (case when fee_token = {{ blockchain_dependencies.get('nativeToken') }} then {{ blockchain_dependencies[blockchain].get('wrappedNative') }} else fee_token end) as token_address,        
         protocolFee as fee_raw
+    from deltav2_fees_balances_raw_{{ blockchain }}
+        where evt_block_time >= TIMESTAMP '{{ cutoff_date }}'     
+    union all
+    -- delta v2 partners revenue
+    select '{{ blockchain }}' as blockchain,
+        'delta-v2' as source, 
+        date_trunc('day', evt_block_time) as block_date,
+        evt_block_time as block_time,
+        evt_block_number as call_block_number,
+        evt_tx_hash as call_tx_hash, 
+        -- TODO: not easy to extract partner address here, may need to find a way
+        0x0000000000000000000000000000000000000000 as user_address, 
+        (case when fee_token = {{ blockchain_dependencies.get('nativeToken') }} then {{ blockchain_dependencies[blockchain].get('wrappedNative') }} else fee_token end) as token_address,        
+        partnerFee as fee_raw
     from deltav2_fees_balances_raw_{{ blockchain }}
         where evt_block_time >= TIMESTAMP '{{ cutoff_date }}'     
     union all

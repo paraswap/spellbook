@@ -3,7 +3,7 @@
 -- old date: '2024-07-08 12:00'  -- start of epoch 20
 
 with
-
+    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_arbitrum AS (
         SELECT
@@ -18,6 +18,7 @@ with
             paraswap_v6_arbitrum.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_arbitrum as (
     SELECT
@@ -45,7 +46,7 @@ with
             unpacked_fee_data_arbitrum
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
-
+    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_avalanche_c AS (
         SELECT
@@ -60,6 +61,7 @@ with
             paraswap_v6_avalanche_c.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_avalanche_c as (
     SELECT
@@ -87,7 +89,7 @@ with
             unpacked_fee_data_avalanche_c
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
-
+    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_bnb AS (
         SELECT
@@ -102,6 +104,7 @@ with
             paraswap_v6_bnb.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_bnb as (
     SELECT
@@ -130,6 +133,7 @@ with
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
 
+    -- delta v2 protocol's and partners revenue src data 
     deltav2_fees_balances_raw_ethereum as (
             select            
                 evt_block_time,
@@ -139,9 +143,11 @@ with
                 protocolFee,
                 partnerFee            
             from
-                paraswapdelta_ethereum.ParaswapDeltav2_evt_OrderSettled as evt
-               
-    ),
+                paraswapdelta_ethereum.ParaswapDeltav2_evt_OrderSettled as evt            
+                where 
+                   
+                evt_block_time >= TIMESTAMP '2024-11-30 12:00'     
+    ),    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_ethereum AS (
         SELECT
@@ -156,6 +162,7 @@ with
             paraswap_v6_ethereum.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_ethereum as (
     SELECT
@@ -183,7 +190,7 @@ with
             unpacked_fee_data_ethereum
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
-
+    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_fantom AS (
         SELECT
@@ -198,6 +205,7 @@ with
             paraswap_v6_fantom.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_fantom as (
     SELECT
@@ -225,7 +233,7 @@ with
             unpacked_fee_data_fantom
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
-
+    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_optimism AS (
         SELECT
@@ -240,6 +248,7 @@ with
             paraswap_v6_optimism.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_optimism as (
     SELECT
@@ -267,7 +276,7 @@ with
             unpacked_fee_data_optimism
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
-
+    
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_polygon AS (
         SELECT
@@ -282,6 +291,7 @@ with
             paraswap_v6_polygon.AugustusFeeVault_call_registerFees
         WHERE
             call_success = true
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00'     
     ),
     unpacked_fee_data_polygon as (
     SELECT
@@ -906,6 +916,7 @@ fee_claim_detail as (
         
         union all
     
+    -- delta v2 protocol's revenue
     select 'ethereum' as blockchain,
         'delta-v2' as source, 
         date_trunc('day', evt_block_time) as block_date,
@@ -915,6 +926,20 @@ fee_claim_detail as (
         0x0000000000bbF5c5Fd284e657F01Bd000933C96D as user_address, 
         (case when fee_token = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee then 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2 else fee_token end) as token_address,        
         protocolFee as fee_raw
+    from deltav2_fees_balances_raw_ethereum
+        where evt_block_time >= TIMESTAMP '2024-11-30 12:00'     
+    union all
+    -- delta v2 partners revenue
+    select 'ethereum' as blockchain,
+        'delta-v2' as source, 
+        date_trunc('day', evt_block_time) as block_date,
+        evt_block_time as block_time,
+        evt_block_number as call_block_number,
+        evt_tx_hash as call_tx_hash, 
+        -- TODO: not easy to extract partner address here, may need to find a way
+        0x0000000000000000000000000000000000000000 as user_address, 
+        (case when fee_token = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee then 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2 else fee_token end) as token_address,        
+        partnerFee as fee_raw
     from deltav2_fees_balances_raw_ethereum
         where evt_block_time >= TIMESTAMP '2024-11-30 12:00'     
     union all
