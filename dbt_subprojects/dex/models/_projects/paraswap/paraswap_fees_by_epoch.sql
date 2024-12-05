@@ -2,28 +2,36 @@
 -- para-fee-detail-v4-materialized-view
 
 with paraswap_fee_address(blockchain, address) as (
-    values
-    ('ethereum',0xb1720612d0131839dc489fcf20398ea925282fca ),
-    ('ethereum',0xd5b927956057075377263aab7f8afc12f85100db ),
-    ('ethereum',0x619bbf92fd6ba59893327676b2685a3762a49a33 ),
-    ('arbitrum',0xd5b927956057075377263aab7f8afc12f85100db ),
+    values    
+    ('ethereum',0xb1720612d0131839dc489fcf20398ea925282fca ), -- no hits since epoch 20
+    ('ethereum',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
+    ('ethereum',0x619bbf92fd6ba59893327676b2685a3762a49a33 ), -- no hits since epoch 20
+    ('ethereum',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ), -- depositor v6 augustus -- accumulates fees from augustus v6
+    ('ethereum',0x0000000000bbf5c5fd284e657f01bd000933c96d ), -- delta v2, accumulates all fees on itself
+    ('arbitrum',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
     ('arbitrum',0xb9eeb869d6dbfc5988d5adf3f63cd6b77ac9d9fd ),
     ('arbitrum',0x7dA82E75BE36Ab9625B1dd40A5aE5181b43473f3 ),
-    ('bnb',0xd5b927956057075377263aab7f8afc12f85100db ),
+    ('arbitrum',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ), -- depositor v6 augustus -- accumulates fees from augustus v6
+    ('bnb',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
     ('bnb',0xcbb65ad3e64f404b5411486e15561bfb645ce642 ),
     ('bnb',0x8c1a1D0b6286F35d47a676aB78482f1cf3D749dC ),
-    ('avalanche_c',0xd5b927956057075377263aab7f8afc12f85100db ),
+    ('bnb',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ), -- depositor v6 augustus -- accumulates fees from augustus v6
+    ('avalanche_c',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
     ('avalanche_c',0x1bf4c97384e7bdc609017305edb23fd28c13e76a ),
     ('avalanche_c',0xAFFdeC0FE0B5BBfd725642D87D14c465d25F8dE8 ),
-    ('fantom',0xd5b927956057075377263aab7f8afc12f85100db ),
+    ('avalanche_c',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ), -- depositor v6 augustus -- accumulates fees from augustus v6
+    ('fantom',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
     ('fantom',0xced122f9b99d224675eeda13f0c14639c5633f91 ),
     ('fantom',0x5487683dc3216655D0C8AA31255e2e313b99B477 ),
-    ('optimism',0xd5b927956057075377263aab7f8afc12f85100db ),
+    ('fantom',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ), -- depositor v6 augustus -- accumulates fees from augustus v6
+    ('optimism',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
     ('optimism',0x3b28a6f6291f7e8277751f2911ac49c585d049f6 ),
     ('optimism',0xf93A7F819F83DBfDbC307d4D4f0FE5a208C50318 ),
-    ('polygon',0xd5b927956057075377263aab7f8afc12f85100db ),
+    ('optimism',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ), -- depositor v6 augustus -- accumulates fees from augustus v6
+    ('polygon',0xd5b927956057075377263aab7f8afc12f85100db ), -- v5 smart vault
     ('polygon',0x0c84cd406b8a4e07df9a1b15ef348023a1dcd075 ),
-    ('polygon',0xABF832105D7D19E5DEC28D014d5a12579dfa1097 )
+    ('polygon',0xABF832105D7D19E5DEC28D014d5a12579dfa1097 ),
+    ('polygon',0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f ) -- depositor v6 augustus -- accumulates fees from augustus v6
 ),
 
 revenue_detail as (
@@ -49,7 +57,7 @@ revenue_detail as (
         --sum(fa) filter (where bd >= current_date - interval '1' day and bd < current_date) as fee_amount_24_hour,
         --sum(fa) filter (where bd >= current_date - interval '90' day and bd < current_date) as fee_amount_90_day,
         --sum(fa) filter (where bd >= date_trunc('year', now())) as fee_amount_ytd
-    from dune.paraswap.result_para_fee_details_with_epoch_v_3 f
+    from dune.paraswap.result_para_fee_details_with_epoch_v_4 f
     left join paraswap_fee_address a on f.bc = a.blockchain and f.ua = a.address
     
     union all
