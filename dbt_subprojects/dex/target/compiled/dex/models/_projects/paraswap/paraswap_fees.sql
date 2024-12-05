@@ -130,6 +130,18 @@ with
         CROSS JOIN UNNEST(addresses, fees) AS t(address, fee)
     ),
 
+    deltav2_fees_balances_raw_ethereum as (
+            select            
+                evt_block_time,
+                evt_block_number,
+                evt_tx_hash,                       
+                destToken as fee_token,
+                protocolFee,
+                partnerFee            
+            from
+                paraswapdelta_ethereum.ParaswapDeltav2_evt_OrderSettled as evt
+               
+    ),
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_ethereum AS (
         SELECT
@@ -313,7 +325,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_arbitrum
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -333,7 +345,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_arbitrum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -341,16 +353,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_arbitrum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -365,14 +377,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from arbitrum.transactions tr
     join arbitrum.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join arbitrum.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -382,7 +394,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join arbitrum.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -392,7 +404,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -411,7 +423,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_arbitrum.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -432,22 +444,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_arbitrum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_arbitrum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_arbitrum.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -467,13 +479,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from arbitrum.transactions tr
         join arbitrum.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join arbitrum.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -482,7 +494,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join arbitrum.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -491,7 +503,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_arbitrum.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -513,7 +525,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_avalanche_c
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -533,7 +545,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_avalanche_c.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -541,16 +553,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_avalanche_c.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -565,14 +577,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from avalanche_c.transactions tr
     join avalanche_c.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join avalanche_c.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -582,7 +594,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join avalanche_c.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -592,7 +604,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -609,7 +621,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_avalanche_c.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -629,22 +641,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_avalanche_c.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_avalanche_c.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_avalanche_c.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -664,13 +676,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from avalanche_c.transactions tr
         join avalanche_c.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join avalanche_c.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -679,7 +691,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join avalanche_c.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -688,7 +700,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_avalanche_c.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -710,7 +722,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_bnb
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -730,7 +742,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_bnb.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -738,16 +750,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_bnb.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -762,14 +774,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from bnb.transactions tr
     join bnb.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join bnb.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -779,7 +791,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join bnb.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -789,7 +801,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -806,7 +818,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_bnb.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -826,22 +838,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_bnb.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_bnb.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_bnb.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -861,13 +873,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from bnb.transactions tr
         join bnb.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join bnb.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -876,7 +888,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join bnb.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -885,7 +897,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_bnb.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -893,6 +905,19 @@ fee_claim_detail as (
     )
         
         union all
+    
+    select 'ethereum' as blockchain,
+        'delta-v2' as source, 
+        date_trunc('day', evt_block_time) as block_date,
+        evt_block_time as block_time,
+        evt_block_number as call_block_number,
+        evt_tx_hash as call_tx_hash, 
+        0x0000000000bbF5c5Fd284e657F01Bd000933C96D as user_address, 
+        (case when fee_token = 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee then 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2 else fee_token end) as token_address,        
+        protocolFee as fee_raw
+    from deltav2_fees_balances_raw_ethereum
+        where evt_block_time >= TIMESTAMP '2024-11-30 12:00'     
+    union all
     
     -- <v6>
     -- all registerFee calls on v6 Fee Claimer        
@@ -907,7 +932,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_ethereum
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -927,7 +952,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_ethereum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -935,16 +960,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_ethereum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -959,14 +984,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from ethereum.transactions tr
     join ethereum.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join ethereum.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -976,7 +1001,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join ethereum.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -986,7 +1011,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -1003,7 +1028,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_ethereum.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -1023,22 +1048,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_ethereum.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_ethereum.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_ethereum.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -1058,13 +1083,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from ethereum.transactions tr
         join ethereum.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join ethereum.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -1073,7 +1098,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join ethereum.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -1082,7 +1107,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_ethereum.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -1104,7 +1129,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_fantom
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -1124,7 +1149,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_fantom.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -1132,16 +1157,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_fantom.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -1156,14 +1181,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from fantom.transactions tr
     join fantom.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join fantom.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -1173,7 +1198,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join fantom.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -1183,7 +1208,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -1200,7 +1225,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_fantom.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -1220,22 +1245,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_fantom.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_fantom.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_fantom.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -1255,13 +1280,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from fantom.transactions tr
         join fantom.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join fantom.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -1270,7 +1295,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join fantom.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -1279,7 +1304,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_fantom.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -1301,7 +1326,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_optimism
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -1321,7 +1346,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_optimism.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -1329,16 +1354,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_optimism.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -1353,14 +1378,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from optimism.transactions tr
     join optimism.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join optimism.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -1370,7 +1395,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join optimism.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -1380,7 +1405,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -1397,7 +1422,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_optimism.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -1417,22 +1442,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_optimism.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_optimism.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_optimism.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -1452,13 +1477,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from optimism.transactions tr
         join optimism.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join optimism.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -1467,7 +1492,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join optimism.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -1476,7 +1501,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_optimism.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -1498,7 +1523,7 @@ fee_claim_detail as (
         fee as fee_raw
     FROM 
         exploded_data_polygon
-        where call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        where call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
     -- ERC20 transfer to v6 Depositor
@@ -1518,7 +1543,7 @@ fee_claim_detail as (
         -- fees come from Augustus v6 but also from ParaSwapDebtSwapAdapterV3, ParaSwapRepayAdapter -- no need to restrict then
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
     left join erc20_polygon.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
@@ -1526,16 +1551,16 @@ fee_claim_detail as (
         -- and erc."from" = 0x6a000f20005980200259b80c5102003040001068 -- Augustus v6
         and erc2.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     left join erc20_polygon.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- i don't understand this conditional. Don't count swaps? But then should omit txs that have ANY outgoing transfer of WETH / ETH, no? 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00'     
+    and block_time >= TIMESTAMP '2024-11-30 12:00'     
 
     union all
     -- v6: ETH Transfer to SmartVault directly
@@ -1550,14 +1575,14 @@ fee_claim_detail as (
         t.value as fee_raw
     from polygon.transactions tr
     join polygon.traces t on 
-        t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t.tx_hash
         and tr.block_number = t.block_number        
         -- and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t.to = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6    
     -- If following transfers have outgoing only, exclude this revenue.
     left join polygon.traces t2 on
-        t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t2.tx_hash -- Other income for Depositor v6
         and tr.block_number = t2.block_number    
         -- and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
@@ -1567,7 +1592,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
     left join polygon.traces t3 on 
-        t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.hash = t3.tx_hash -- Outgoing
         and tr.block_number = t3.block_number        
         and t3."from" = 0x4d5401b9e9dcd7c9097e1df036c3afafc35d604f -- Depositor v6
@@ -1577,7 +1602,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     -- </v6>
     union all
@@ -1594,7 +1619,7 @@ fee_claim_detail as (
             _fee as fee_raw
         from paraswap_polygon.FeeClaimer_call_registerFee
         where call_success = true
-            and call_block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and call_block_time >= TIMESTAMP '2024-11-30 12:00' 
 
     union all
 
@@ -1614,22 +1639,22 @@ fee_claim_detail as (
         and t.block_number = erc.evt_block_number
         and erc."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
-        and erc.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     -- If following transfers have outgoing only, exclude this revenue.
         left join erc20_polygon.evt_Transfer erc2 on t.hash = erc2.evt_tx_hash
         and t.block_number = erc2.evt_block_number
         and erc2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and erc2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc2.evt_index > erc.evt_index
-        and erc2.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc2.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
         left join erc20_polygon.evt_Transfer erc3 on t.hash = erc3.evt_tx_hash
         and t.block_number = erc3.evt_block_number
         and erc3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and erc3.evt_index > erc.evt_index
-        and erc3.evt_block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and erc3.evt_block_time >= TIMESTAMP '2024-11-30 12:00' 
     where (erc2.evt_tx_hash is not null or erc3.evt_tx_hash is null)
     and t.success
-    and block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
             select 1 from paraswap_polygon.FeeClaimer_call_registerFee
         where call_tx_hash = erc.evt_tx_hash
@@ -1649,13 +1674,13 @@ fee_claim_detail as (
         t.value as fee_raw
         from polygon.transactions tr
         join polygon.traces t on tr.hash = t.tx_hash
-            and t.block_time >= TIMESTAMP '2024-07-08 12:00' 
+            and t.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t.block_number        
         and t."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router        
         and t.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault    
     -- If following transfers have outgoing only, exclude this revenue.
     left join polygon.traces t2 on tr.hash = t2.tx_hash -- Other income for SmartVault
-                and t2.block_time >= TIMESTAMP '2024-07-08 12:00' 
+                and t2.block_time >= TIMESTAMP '2024-11-30 12:00' 
                 and tr.block_number = t2.block_number    
         and t2."from" = 0xdef171fe48cf0115b1d80b88dc8eab59176fee57 -- Router
         and t2.to = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
@@ -1664,7 +1689,7 @@ fee_claim_detail as (
         and t2.call_type = 'call'
         and t2.value > cast(0 as uint256)
         left join polygon.traces t3 on tr.hash = t3.tx_hash -- Outgoing
-        and t3.block_time >= TIMESTAMP '2024-07-08 12:00' 
+        and t3.block_time >= TIMESTAMP '2024-11-30 12:00' 
         and tr.block_number = t3.block_number        
         and t3."from" = 0xd5b927956057075377263aab7f8afc12f85100db -- SmartVault
         and t3.trace_address > t.trace_address
@@ -1673,7 +1698,7 @@ fee_claim_detail as (
         and t3.value > cast(0 as uint256)        
     where (t2.tx_hash is not null or t3.tx_hash is null)
     and tr.success
-    and tr.block_time >= TIMESTAMP '2024-07-08 12:00' 
+    and tr.block_time >= TIMESTAMP '2024-11-30 12:00' 
     and not exists (
                 select 1 from paraswap_polygon.FeeClaimer_call_registerFee
         where call_tx_hash = t.tx_hash
@@ -1689,7 +1714,7 @@ price_list as (
         contract_address,
         avg(price) as price
     from prices.usd
-    where minute >= TIMESTAMP '2024-07-08 12:00' 
+    where minute >= TIMESTAMP '2024-11-30 12:00' 
     group by 1, 2, 3
 )
 

@@ -35,7 +35,8 @@ set blockchain_dependencies = {
         'traces': 'ethereum.traces',
         'erc20EvtTransfer': 'erc20_ethereum.evt_Transfer',
         'tokensToReplace': [],
-        'wrappedNative': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
+        'wrappedNative': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+        'delta_v2': '0x0000000000bbF5c5Fd284e657F01Bd000933C96D'
     },
     'arbitrum': {
         'registerFeesV6': 'paraswap_v6_arbitrum.AugustusFeeVault_call_registerFees',
@@ -99,7 +100,8 @@ set blockchain_dependencies = {
         'traces': 'base.traces',
         'erc20EvtTransfer': 'erc20_base.evt_Transfer',
         'tokensToReplace': [],
-        'wrappedNative': '0x4200000000000000000000000000000000000006'
+        'wrappedNative': '0x4200000000000000000000000000000000000006',
+        'delta_v2': '0x0000000000bbF5c5Fd284e657F01Bd000933C96D'
     },
     'zkevm': {
         'registerFeesV6': 'paraswap_v6_zkevm.AugustusFeeVault_call_registerFees',
@@ -112,7 +114,24 @@ set blockchain_dependencies = {
 } 
 %}
 with
-{% for blockchain in blockchains %}
+{% for blockchain in blockchains %}{% 
+    if blockchain_dependencies[blockchain].get('delta_v2') %}
+    deltav2_fees_balances_raw_{{ blockchain }} as (
+            select            
+                evt_block_time,
+                evt_block_number,
+                evt_tx_hash,                       
+                destToken as fee_token,
+                protocolFee,
+                partnerFee            
+            from
+                paraswapdelta_{{ blockchain }}.ParaswapDeltav2_evt_OrderSettled as evt
+            {% if is_incremental() %}
+                WHERE 
+                {{ incremental_predicate('evt_block_time') }}
+            {% endif %}   
+    ),{% 
+    endif %}
     -- all registerFee calls on v6 Fee Claimer        
     parsed_fee_data_{{ blockchain }} AS (
         SELECT
@@ -156,7 +175,21 @@ with
     ),
 {% endfor %}
 fee_claim_detail as (
-    {% for blockchain in blockchains %}
+    {% for blockchain in blockchains %}{% 
+    if blockchain_dependencies[blockchain].get('delta_v2') %}
+    select '{{ blockchain }}' as blockchain,
+        'delta-v2' as source, 
+        date_trunc('day', evt_block_time) as block_date,
+        evt_block_time as block_time,
+        evt_block_number as call_block_number,
+        evt_tx_hash as call_tx_hash, 
+        {{ blockchain_dependencies[blockchain].get('delta_v2') }} as user_address, 
+        (case when fee_token = {{ blockchain_dependencies.get('nativeToken') }} then {{ blockchain_dependencies[blockchain].get('wrappedNative') }} else fee_token end) as token_address,        
+        protocolFee as fee_raw
+    from deltav2_fees_balances_raw_{{ blockchain }}
+        where evt_block_time >= TIMESTAMP '{{ cutoff_date }}'     
+    union all
+    {% endif %}
     -- <v6>
     -- all registerFee calls on v6 Fee Claimer        
     select '{{ blockchain }}' as blockchain,
